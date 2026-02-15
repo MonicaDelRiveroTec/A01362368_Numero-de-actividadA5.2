@@ -1,11 +1,14 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# pylint: disable=invalid-name
 """
-computeSales.py - Sistema de cálculo de ventas
+computeSales - Sistema de cálculo de ventas.
 
 Este programa procesa archivos JSON de catálogos de productos y registros
 de ventas para calcular totales y generar reportes.
 
-Uso:
-    python computeSales.py priceCatalogue.json salesRecord.json
+El nombre del archivo (computeSales.py) es un requerimiento del proyecto,
+por eso se desactiva el warning C0103 (invalid-name).
 """
 
 import sys
@@ -23,21 +26,18 @@ def load_catalogue(filename):
 
     Returns:
         dict: Diccionario con {nombre_producto: precio}
-
-    Raises:
-        SystemExit: Si el archivo no existe o no es JSON válido
     """
     try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            products = json.load(f)
+        with open(filename, 'r', encoding='utf-8') as file:
+            products = json.load(file)
     except FileNotFoundError:
         print(f"ERROR: No se encontró el archivo '{filename}'")
         sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"ERROR: El archivo '{filename}' no es JSON válido: {e}")
+    except json.JSONDecodeError as error:
+        print(f"ERROR: El archivo '{filename}' no es JSON válido: {error}")
         sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: No se pudo leer '{filename}': {e}")
+    except IOError as error:
+        print(f"ERROR: No se pudo leer '{filename}': {error}")
         sys.exit(1)
 
     catalogue = {}
@@ -45,7 +45,6 @@ def load_catalogue(filename):
 
     for i, product in enumerate(products):
         try:
-            # Soportar múltiples variaciones de nombres de campos
             title = (product.get('title') or product.get('Title') or
                      product.get('name') or product.get('Name'))
             price = (product.get('price') or product.get('Price') or
@@ -54,14 +53,12 @@ def load_catalogue(filename):
             if title and price is not None:
                 catalogue[title] = float(price)
             else:
-                print(f"WARNING: Producto en posición {i} "
-                      f"sin campos requeridos")
+                print(f"WARNING: Producto {i} sin campos requeridos")
                 errors += 1
 
-        except (ValueError, TypeError) as e:
-            print(f"WARNING: Error en producto {i}: {e}")
+        except (ValueError, TypeError) as error:
+            print(f"WARNING: Error en producto {i}: {error}")
             errors += 1
-            continue
 
     if errors > 0:
         print(f"Total de productos con errores: {errors}\n")
@@ -78,21 +75,18 @@ def load_sales(filename):
 
     Returns:
         list: Lista de diccionarios con las ventas
-
-    Raises:
-        SystemExit: Si el archivo no existe o no es JSON válido
     """
     try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        with open(filename, 'r', encoding='utf-8') as file:
+            return json.load(file)
     except FileNotFoundError:
         print(f"ERROR: No se encontró el archivo '{filename}'")
         sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"ERROR: El archivo '{filename}' no es JSON válido: {e}")
+    except json.JSONDecodeError as error:
+        print(f"ERROR: El archivo '{filename}' no es JSON válido: {error}")
         sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: No se pudo leer '{filename}': {e}")
+    except IOError as error:
+        print(f"ERROR: No se pudo leer '{filename}': {error}")
         sys.exit(1)
 
 
@@ -114,127 +108,143 @@ def group_sales_by_id(sales):
         if sale_id:
             grouped[sale_id].append(sale)
         else:
-            # Si no hay SALE_ID, agrupar como "Sin ID"
             grouped['N/A'].append(sale)
 
     return grouped
 
 
-def format_item_line(product_name, quantity, price, subtotal):
+def format_item_line(name, qty, price, subtotal):
     """
     Formatea una línea de item de venta.
 
     Args:
-        product_name (str): Nombre del producto
-        quantity (int): Cantidad
+        name (str): Nombre del producto
+        qty (int): Cantidad
         price (float): Precio unitario
-        subtotal (float): Subtotal (precio * cantidad)
+        subtotal (float): Subtotal
 
     Returns:
         str: Línea formateada
     """
-    return (f"  {product_name:40s} {quantity:3d} x "
-            f"${price:6.2f} = ${subtotal:8.2f}")
+    return f"  {name:40s} {qty:3d} x ${price:6.2f} = ${subtotal:8.2f}"
+
+
+def process_sale_item(sale, catalogue):
+    """
+    Procesa un item individual de venta.
+
+    Args:
+        sale (dict): Diccionario con datos del item
+        catalogue (dict): Catálogo de productos
+
+    Returns:
+        tuple: (success, subtotal, line_text, error_count)
+    """
+    try:
+        name = (sale.get('Product') or sale.get('product') or
+                sale.get('PRODUCT') or sale.get('nombre'))
+        qty = (sale.get('Quantity') or sale.get('quantity') or
+               sale.get('QUANTITY') or sale.get('cantidad'))
+
+        if not name:
+            return False, 0, "  WARNING: Item sin nombre", 1
+        if not qty:
+            return False, 0, "  WARNING: Item sin cantidad", 1
+
+        qty = int(qty)
+
+        if name in catalogue:
+            price = catalogue[name]
+            subtotal = price * qty
+            line = format_item_line(name, qty, price, subtotal)
+            return True, subtotal, line, 0
+
+        warning = f"  WARNING: '{name}' no encontrado"
+        return False, 0, warning, 1
+
+    except (TypeError, ValueError) as error:
+        warning = f"  WARNING: Error procesando item: {error}"
+        return False, 0, warning, 1
+
+
+def process_single_sale(sale_id, items, catalogue, lines):
+    """
+    Procesa una venta completa.
+
+    Args:
+        sale_id: ID de la venta
+        items (list): Lista de items de la venta
+        catalogue (dict): Catálogo de productos
+        lines (list): Lista para agregar líneas de salida
+
+    Returns:
+        tuple: (sale_total, processed_count, error_count)
+    """
+    total = 0.0
+    processed = 0
+    errors = 0
+    date = items[0].get('SALE_Date') or items[0].get('date') or 'N/A'
+
+    header = (f"\n{'=' * 60}\n"
+              f"VENTA #{sale_id} - Fecha: {date}\n"
+              f"{'=' * 60}")
+    lines.append(header)
+    print(header)
+
+    for sale in items:
+        success, subtotal, line, err = process_sale_item(sale, catalogue)
+        lines.append(line)
+        print(line)
+
+        if success:
+            total += subtotal
+            processed += 1
+        else:
+            errors += err
+
+    footer = (f"{'-' * 60}\n"
+              f"  TOTAL VENTA #{sale_id}: ${total:.2f}\n"
+              f"{'=' * 60}")
+    lines.append(footer)
+    print(footer)
+
+    return total, processed, errors
 
 
 def compute_total(catalogue, sales):
     """
-    Calcula el total de todas las ventas agrupadas por SALE_ID.
+    Calcula el total de todas las ventas.
 
     Args:
         catalogue (dict): Diccionario de productos y precios
         sales (list): Lista de registros de ventas
 
     Returns:
-        tuple: (gran_total, lineas_de_detalle, estadisticas)
+        tuple: (total, lineas, estadisticas)
     """
-    grand_total = 0.0
+    total = 0.0
     processed = 0
     errors = 0
-    output_lines = []
+    lines = []
 
-    # Agrupar ventas por ID
-    grouped_sales = group_sales_by_id(sales)
+    grouped = group_sales_by_id(sales)
 
-    # Procesar cada venta
-    for sale_id in sorted(grouped_sales.keys()):
-        items = grouped_sales[sale_id]
-        sale_total = 0.0
-        sale_date = items[0].get('SALE_Date') or items[0].get('date') or 'N/A'
-
-        # Header de la venta
-        header = (f"\n{'=' * 60}\n"
-                  f"VENTA #{sale_id} - Fecha: {sale_date}\n"
-                  f"{'=' * 60}")
-        output_lines.append(header)
-        print(header)
-
-        # Procesar cada item de esta venta
-        for sale in items:
-            try:
-                # Obtener producto y cantidad con soporte de variaciones
-                product_name = (sale.get('Product') or sale.get('product') or
-                                sale.get('PRODUCT') or sale.get('nombre'))
-
-                quantity = (sale.get('Quantity') or sale.get('quantity') or
-                            sale.get('QUANTITY') or sale.get('cantidad'))
-
-                if not product_name:
-                    warning = "  WARNING: Item sin nombre de producto"
-                    output_lines.append(warning)
-                    print(warning)
-                    errors += 1
-                    continue
-
-                if not quantity:
-                    warning = "  WARNING: Item sin cantidad"
-                    output_lines.append(warning)
-                    print(warning)
-                    errors += 1
-                    continue
-
-                quantity = int(quantity)
-
-                if product_name in catalogue:
-                    price = catalogue[product_name]
-                    subtotal = price * quantity
-                    sale_total += subtotal
-                    processed += 1
-
-                    line = format_item_line(product_name, quantity,
-                                            price, subtotal)
-                    output_lines.append(line)
-                    print(line)
-                else:
-                    warning = (f"  WARNING: '{product_name}' "
-                               f"no encontrado en catálogo")
-                    output_lines.append(warning)
-                    print(warning)
-                    errors += 1
-
-            except (TypeError, ValueError) as e:
-                warning = f"  WARNING: Error procesando item: {e}"
-                output_lines.append(warning)
-                print(warning)
-                errors += 1
-                continue
-
-        # Subtotal de esta venta
-        subtotal_line = (f"{'-' * 60}\n"
-                         f"  TOTAL VENTA #{sale_id}: ${sale_total:.2f}\n"
-                         f"{'=' * 60}")
-        output_lines.append(subtotal_line)
-        print(subtotal_line)
-
-        grand_total += sale_total
+    for sale_id in sorted(grouped.keys()):
+        items = grouped[sale_id]
+        sale_total, sale_proc, sale_err = process_single_sale(
+            sale_id, items, catalogue, lines
+        )
+        total += sale_total
+        processed += sale_proc
+        errors += sale_err
 
     stats = {
         'processed': processed,
         'errors': errors,
-        'total_sales': len(grouped_sales)
+        'total_sales': len(grouped)
     }
 
-    return grand_total, output_lines, stats
+    return total, lines, stats
 
 
 def write_output(filename, content):
@@ -246,10 +256,10 @@ def write_output(filename, content):
         content (str): Contenido a escribir
     """
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(content)
-    except IOError as e:
-        print(f"ERROR: No se pudo escribir '{filename}': {e}")
+        with open(filename, 'w', encoding='utf-8') as file:
+            file.write(content)
+    except IOError as error:
+        print(f"ERROR: No se pudo escribir '{filename}': {error}")
 
 
 def print_statistics(stats):
@@ -262,106 +272,123 @@ def print_statistics(stats):
     print(f"\n{'=' * 60}")
     print("ESTADÍSTICAS DE PROCESAMIENTO")
     print(f"{'=' * 60}")
-    print(f"  Total de ventas procesadas: {stats['total_sales']}")
-    print(f"  Items procesados correctamente: {stats['processed']}")
+    print(f"  Total de ventas: {stats['total_sales']}")
+    print(f"  Items procesados: {stats['processed']}")
     print(f"  Items con errores: {stats['errors']}")
     if stats['errors'] > 0:
-        error_rate = (stats['errors'] /
-                      (stats['processed'] + stats['errors'])) * 100
-        print(f"  Tasa de error: {error_rate:.2f}%")
+        total = stats['processed'] + stats['errors']
+        rate = (stats['errors'] / total) * 100
+        print(f"  Tasa de error: {rate:.2f}%")
     print(f"{'=' * 60}")
 
 
-def generate_report(catalogue_file, sales_file, catalogue_size,
-                    sales_size, detail_lines, grand_total, elapsed_time):
+def build_header(files, sizes):
+    """
+    Construye el encabezado del reporte.
+
+    Args:
+        files (tuple): (archivo_catalogo, archivo_ventas)
+        sizes (tuple): (tamaño_catalogo, tamaño_ventas)
+
+    Returns:
+        list: Líneas del encabezado
+    """
+    return [
+        "=" * 60,
+        "          REPORTE DE VENTAS - SALES REPORT",
+        "=" * 60,
+        f"Archivo de catálogo: {files[0]}",
+        f"Archivo de ventas:   {files[1]}",
+        f"Productos en catálogo: {sizes[0]}",
+        f"Registros procesados:  {sizes[1]}",
+        "=" * 60
+    ]
+
+
+def build_footer(total, elapsed):
+    """
+    Construye el pie del reporte.
+
+    Args:
+        total (float): Total general
+        elapsed (float): Tiempo de ejecución
+
+    Returns:
+        list: Líneas del pie
+    """
+    return [
+        "\n" + "=" * 60,
+        "                    RESUMEN FINAL",
+        "=" * 60,
+        f"  GRAN TOTAL: ${total:.2f}",
+        f"  Tiempo de ejecución: {elapsed:.4f} segundos",
+        "=" * 60
+    ]
+
+
+def generate_report(files, sizes, lines, total, elapsed):
     """
     Genera el reporte completo de ventas.
 
     Args:
-        catalogue_file (str): Nombre del archivo de catálogo
-        sales_file (str): Nombre del archivo de ventas
-        catalogue_size (int): Número de productos en catálogo
-        sales_size (int): Número de registros de ventas
-        detail_lines (list): Líneas de detalle del reporte
-        grand_total (float): Total general
-        elapsed_time (float): Tiempo de ejecución en segundos
+        files (tuple): Archivos de entrada
+        sizes (tuple): Tamaños de datos
+        lines (list): Líneas de detalle
+        total (float): Total general
+        elapsed (float): Tiempo
 
     Returns:
-        str: Reporte completo formateado
+        str: Reporte completo
     """
-    report = []
-    report.append("=" * 60)
-    report.append("          REPORTE DE VENTAS - SALES REPORT")
-    report.append("=" * 60)
-    report.append(f"Archivo de catálogo: {catalogue_file}")
-    report.append(f"Archivo de ventas:   {sales_file}")
-    report.append(f"Productos en catálogo: {catalogue_size}")
-    report.append(f"Registros procesados:  {sales_size}")
-    report.append("=" * 60)
-    report.extend(detail_lines)
-    report.append("\n" + "=" * 60)
-    report.append("                    RESUMEN FINAL")
-    report.append("=" * 60)
-    report.append(f"  GRAN TOTAL: ${grand_total:.2f}")
-    report.append(f"  Tiempo de ejecución: {elapsed_time:.4f} segundos")
-    report.append("=" * 60)
-
+    report = build_header(files, sizes)
+    report.extend(lines)
+    report.extend(build_footer(total, elapsed))
     return "\n".join(report)
 
 
 def main():
     """Función principal del programa."""
-    start_time = time.time()
+    start = time.time()
 
-    # Verificar argumentos de línea de comandos
     if len(sys.argv) != 3:
         print("Uso: python computeSales.py "
               "priceCatalogue.json salesRecord.json")
         sys.exit(1)
 
-    catalogue_file = sys.argv[1]
-    sales_file = sys.argv[2]
+    cat_file = sys.argv[1]
+    sal_file = sys.argv[2]
 
-    # Cargar archivos
     print("=" * 60)
     print("Cargando archivos...")
     print("=" * 60)
 
-    catalogue = load_catalogue(catalogue_file)
-    sales = load_sales(sales_file)
+    catalogue = load_catalogue(cat_file)
+    sales = load_sales(sal_file)
 
     print(f"✓ Catálogo cargado: {len(catalogue)} productos")
     print(f"✓ Ventas cargadas: {len(sales)} registros")
 
-    # Calcular totales
-    grand_total, detail_lines, stats = compute_total(catalogue, sales)
+    total, lines, stats = compute_total(catalogue, sales)
 
-    # Mostrar estadísticas
     print_statistics(stats)
 
-    # Calcular tiempo transcurrido
-    end_time = time.time()
-    elapsed_time = end_time - start_time
+    elapsed = time.time() - start
 
-    # Generar y mostrar resumen final
     print("\n" + "=" * 60)
     print("                    RESUMEN FINAL")
     print("=" * 60)
-    print(f"  GRAN TOTAL: ${grand_total:.2f}")
-    print(f"  Tiempo de ejecución: {elapsed_time:.4f} segundos")
+    print(f"  GRAN TOTAL: ${total:.2f}")
+    print(f"  Tiempo de ejecución: {elapsed:.4f} segundos")
     print("=" * 60)
 
-    # Generar reporte completo
     report = generate_report(
-        catalogue_file, sales_file,
-        len(catalogue), len(sales),
-        detail_lines, grand_total, elapsed_time
+        (cat_file, sal_file),
+        (len(catalogue), len(sales)),
+        lines, total, elapsed
     )
 
-    # Escribir archivo de resultados
-    output_filename = "SalesResults.txt"
-    write_output(output_filename, report)
-    print(f"\n✓ Resultados guardados en: {output_filename}")
+    write_output("SalesResults.txt", report)
+    print("\n✓ Resultados guardados en: SalesResults.txt")
 
 
 if __name__ == "__main__":
