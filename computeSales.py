@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 computeSales.py - Sistema de cálculo de ventas
 
@@ -7,9 +6,6 @@ de ventas para calcular totales y generar reportes.
 
 Uso:
     python computeSales.py priceCatalogue.json salesRecord.json
-
-Autor: Sistema de Ventas
-Fecha: 2024
 """
 
 import sys
